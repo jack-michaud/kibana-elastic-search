@@ -4,7 +4,7 @@ import requests
 import elastic_requests
 
 
-def make_request(self, request):
+def make_request(request):
 	'''
 	@param request:  Request object. Generates and calls request.
 	@return:         JSON response
@@ -19,7 +19,7 @@ def make_request(self, request):
 	return json.loads(response.text)
 
 class ElasticSearch:
-	
+
 
 	def __init__(self):
 		pass
@@ -34,18 +34,21 @@ class ElasticSearch:
 		mac = mac.lower().replace('-','').replace(':','')
 		if set(mac).intersection(set(['1','2','3','4','5',
 									  '6','7','8','9','0',
-									  'A','B','C','D','E',
-									  'F'])) != set(mac):
+									  'a','b','c','d','e',
+									  'f'])) != set(mac):
 			raise ElasticMacError("Did not pass a valid MAC address. Make sure it only includes characters 0-9 and A-F.")
 
 		return mac
 
 
-
-	@make_request(elastic_requests.MSEARCH)
+	#
+	# @make_request(elastic_requests.MSEARCH)
 	def search_mac(self, mac, request=None):
 		mac = self.validate_mac(mac)
+		elastic_requests.MSEARCH.generate(["logstash-2017.08.31"])
+
 		import pdb; pdb.set_trace()
+
 
 
 

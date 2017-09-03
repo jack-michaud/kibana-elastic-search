@@ -1,22 +1,105 @@
-from .Request import Request
-import requests
 
-BASE_URL = "http://155.33.208.205/elasticsearch"
-SEARCH_URL = BASE_URL + "/_msearch"
-STATS_URL = BASE_URL + "/logstash-*/_field_stats"
+from elasticsearch import Elasticsearch
+from datetime import datetime
+from dateutil import parser
 
-# http://155.33.208.205/elasticsearch/logstash-*/_field_stats?level=indices
+client = Elasticsearch(['155.33.208.205:9200'])
+
+epoch = datetime.utcfromtimestamp(0)
+def unix_time_millis(dt):
+    return (dt - epoch).total_seconds() * 1000.0
+
+def user_connection_info(username=None, mac=None, date=None):
+    '''
+    @param username:  MyNEU username ("michaud.j", "lastname.first")
+    @param mac:       MAC address (digits 0-9, A-F). Automatically replaces 
+                      delineators (: or -)
+    @param date:      Fetches data after given date. Datetime object
+
+    @returns          Dictionary - 
+                      {
+                          "success": True|False,
+                          "last_connection": datetime|None 
+                      }
+    '''
+    
+    def generate_search(query):
+        return client.search(index='logstash-*',
+	        body={
+		        "query": {
+		            "filtered": { "query": {
+		                "query_string": {
+		                    "analyze_wildcard": True,
+		                    "query": query,
+		                }
+		            }}
+		        },
+		        "size": 10,
+		        "sort": [
+                    {
+                        "@timestamp": {
+                            "order": "desc",
+                            "unmapped_type": "boolean"
+                        }
+                    },
+                ],
+                "filter": {
+                    "bool": {
+                        "must": [{
+                            "range": {
+                                "@timestamp": {
+                                    "gte": unix_time_millis(date),
+                                    "lte": unix_time_millis(datetime.now()),
+                                    "format": "epoch_millis",
+                                } 
+                            },
+                        }]
+                    }
+                }
+	        }
+	    )
+    
+    def generate_query(query):
+        if mac is not None:
+            query = query + "AND \"{mac}\" ".format(mac=mac)
+
+        if username is not None:
+            query = query + "AND \"{username}\" ".format(username=username)
+
+        return query
+    
+    if mac is not None:
+        mac = mac.lower().replace('-','').replace(':','')
+        if set(mac).intersection(set(['1','2','3','4','5', \
+                                      '6','7','8','9','0', \
+                                      'a','b','c','d','e', \
+                                      'f'])) != set(mac):
+            raise Exception("Invalid mac address {}".format(mac))
+
+    query = "message:\"NEU-NUResdevice-Device-Allowed\" AND \"outcome=\" "
+    query = generate_query(query)
+
+    response = generate_search(query)
+	
+    # If there are any successful connections, end with success.
+    if response['hits']['total'] > 0:
+        return { 
+            "success": True, 
+            "last_connection": parser.parse(response['hits']['hits'][0]['_source']['@timestamp']) 
+        }
+
+    # Otherwise, check failed connections.
+
+    query = "message:\"[Deny Access Profile]\" "
+    query = generate_query(query)
+
+    response = generate_search(query)
+	
+    return { 
+        "success": False, 
+        "last_connection": parser.parse(response['hits']['hits'][0]['_source']['@timestamp']) 
+    }
+	
 
 
-def msearch_generator():
-	querystring = {"timeout":"0","ignore_unavailable":"true","preference":"1503602952189"}
 
-	payload = "{\"index\":[\"{logstash_date}\"],\"search_type\":\"count\",\"ignore_unavailable\":true}\n{\"highlight\":{\"pre_tags\":[\"@kibana-highlighted-field@\"],\"post_tags\":[\"@/kibana-highlighted-field@\"],\"fields\":{\"*\":{}},\"require_field_match\":false,\"fragment_size\":2147483647},\"query\":{\"filtered\":{\"query\":{\"query_string\":{\"query\":\"message:\\\"NEU-NUResdevice-Device-Allowed\\\" AND \\\"outcome=\\\"\",\"analyze_wildcard\":true}},\"filter\":{\"bool\":{\"must\":[{\"query\":{\"match\":{\"host\":{\"query\":\"155.33.208.205\",\"type\":\"phrase\"}}}},{\"query\":{\"match\":{\"programname\":{\"query\":\"CEF\",\"type\":\"phrase\"}}}},{\"query\":{\"match\":{\"sysloghost\":{\"query\":\"155.33.33.90\",\"type\":\"phrase\"}}}},{\"range\":{\"@timestamp\":{\"gte\":1498418997919,\"lte\":1503602997919,\"format\":\"epoch_millis\"}}}],\"must_not\":[]}}}},\"size\":0,\"sort\":[{\"@timestamp\":{\"order\":\"desc\",\"unmapped_type\":\"boolean\"}}],\"aggs\":{\"2\":{\"date_histogram\":{\"field\":\"@timestamp\",\"interval\":\"1d\",\"time_zone\":\"America/New_York\",\"min_doc_count\":0,\"extended_bounds\":{\"min\":1498418997919,\"max\":1503602997919}}}},\"fields\":[\"*\",\"_source\"],\"script_fields\":{},\"fielddata_fields\":[\"@timestamp\"]}\n"
-	headers = {
-	    'kbn-version': "4.5.4",
-	    'content-type': "application/json",
-	    'cache-control': "no-cache",
-	    }
-	return {'querystring': querystring, 'payload': payload, 'headers': headers}
-
-MSEARCH = Request(SEARCH_URL, **msearch_generator())

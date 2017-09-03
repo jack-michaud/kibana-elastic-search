@@ -1,22 +1,6 @@
 
-from Elastic.Search import ElasticSearch
+
+from Elastic.elastic_requests import *
 
 
-import pdb; pdb.set_trace()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+print user_connection_info(username='michaud.j', date=datetime(2017, 9, 2))
