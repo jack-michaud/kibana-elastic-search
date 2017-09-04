@@ -2,12 +2,20 @@
 from elasticsearch import Elasticsearch
 from datetime import datetime
 from dateutil import parser
+import re
+import pytz
+
+
+mac_regex = r"dmac=(\d+|\w+)+"
+find_mac = lambda string: re.search(mac_regex, string).groups()[0]
+
+find_time = lambda string: parser.parse(string)
 
 client = Elasticsearch(['155.33.208.205:9200'])
 
 epoch = datetime.utcfromtimestamp(0)
 def unix_time_millis(dt):
-    return (dt - epoch).total_seconds() * 1000.0
+    return (dt - epoch).total_seconds() * 1000
 
 def user_connection_info(username=None, mac=None, date=None):
     '''
@@ -19,7 +27,10 @@ def user_connection_info(username=None, mac=None, date=None):
     @returns          Dictionary - 
                       {
                           "success": True|False,
-                          "last_connection": datetime|None 
+                          "last_connection": {
+                              "time": datetime|None,
+                              "device": str, MAC addressm
+                          }
                       }
     '''
     
@@ -48,8 +59,8 @@ def user_connection_info(username=None, mac=None, date=None):
                         "must": [{
                             "range": {
                                 "@timestamp": {
-                                    "gte": unix_time_millis(date),
-                                    "lte": unix_time_millis(datetime.now()),
+                                    "gte": int(unix_time_millis(date)),
+                                    "lte": int(unix_time_millis(datetime.now())),
                                     "format": "epoch_millis",
                                 } 
                             },
@@ -85,7 +96,10 @@ def user_connection_info(username=None, mac=None, date=None):
     if response['hits']['total'] > 0:
         return { 
             "success": True, 
-            "last_connection": parser.parse(response['hits']['hits'][0]['_source']['@timestamp']) 
+            "last_connection": {
+                "time": find_time(response['hits']['hits'][0]['_source']['@timestamp']),
+                "device": find_mac(response['hits']['hits'][0]['_source']['message']),
+            }
         }
 
     # Otherwise, check failed connections.
@@ -97,7 +111,10 @@ def user_connection_info(username=None, mac=None, date=None):
 	
     return { 
         "success": False, 
-        "last_connection": parser.parse(response['hits']['hits'][0]['_source']['@timestamp']) 
+        "last_connection": {
+            "time": find_time(response['hits']['hits'][0]['_source']['@timestamp']),
+            "device": find_mac(response['hits']['hits'][0]['_source']['message'])
+        }
     }
 	
 
