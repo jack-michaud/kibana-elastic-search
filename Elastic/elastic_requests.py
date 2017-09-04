@@ -1,19 +1,24 @@
 
+from .settings import ElasticSettings
+
 from elasticsearch import Elasticsearch
-from datetime import datetime
+import datetime
 from dateutil import parser
 import re
 import pytz
 
 
-mac_regex = r"dmac=(\d+|\w+)+"
-find_mac = lambda string: re.search(mac_regex, string).groups()[0]
 
-find_time = lambda string: parser.parse(string)
+mac_regex  = r"dmac=(\d+|\w+)+"
+name_regex = r"(?:duser=)(.+?\s)"
 
-client = Elasticsearch(['155.33.208.205:9200'])
+find_mac      = lambda string: re.search(mac_regex, string).groups()[0]
+find_username = lambda string: re.search(name_regex, string).groups()[0][:-1]
+find_time     = lambda string: parser.parse(string)
 
-epoch = datetime.utcfromtimestamp(0)
+client = Elasticsearch(ElasticSettings.ELASTIC_SEARCH_URL)
+
+epoch = datetime.datetime.utcfromtimestamp(0)
 def unix_time_millis(dt):
     return (dt - epoch).total_seconds() * 1000
 
@@ -22,20 +27,28 @@ def user_connection_info(username=None, mac=None, date=None):
     @param username:  MyNEU username ("michaud.j", "lastname.first")
     @param mac:       MAC address (digits 0-9, A-F). Automatically replaces 
                       delineators (: or -)
-    @param date:      Fetches data after given date. Datetime object
+    @param date:      Fetches data after given date. By default searches 
+                      after 60 days ago. Datetime object
 
     @returns          Dictionary - 
                       {
                           "success": True|False,
                           "last_connection": {
                               "time": datetime|None,
-                              "device": str, MAC addressm
+                              "device": str, MAC address,
+                              "username": str|None (if failed connection, this will be none)
                           }
                       }
     '''
+
+    if username is None and mac is None:
+        raise Exception("Must give either a username or mac (or both)")
+
+    if date is None:
+        date = datetime.datetime.now() - datetime.timedelta(days=60)
     
     def generate_search(query):
-        return client.search(index='logstash-*',
+        return client.search(index=ElasticSettings.ELASTIC_INDEX,
 	        body={
 		        "query": {
 		            "filtered": { "query": {
@@ -60,7 +73,7 @@ def user_connection_info(username=None, mac=None, date=None):
                             "range": {
                                 "@timestamp": {
                                     "gte": int(unix_time_millis(date)),
-                                    "lte": int(unix_time_millis(datetime.now())),
+                                    "lte": int(unix_time_millis(datetime.datetime.now())),
                                     "format": "epoch_millis",
                                 } 
                             },
@@ -84,7 +97,8 @@ def user_connection_info(username=None, mac=None, date=None):
         if set(mac).intersection(set(['1','2','3','4','5', \
                                       '6','7','8','9','0', \
                                       'a','b','c','d','e', \
-                                      'f'])) != set(mac):
+                                      'f'])) != set(mac) and \
+                                    len(mac) == 12:
             raise Exception("Invalid mac address {}".format(mac))
 
     query = "message:\"NEU-NUResdevice-Device-Allowed\" AND \"outcome=\" "
@@ -99,6 +113,7 @@ def user_connection_info(username=None, mac=None, date=None):
             "last_connection": {
                 "time": find_time(response['hits']['hits'][0]['_source']['@timestamp']),
                 "device": find_mac(response['hits']['hits'][0]['_source']['message']),
+                "username": find_username(response['hits']['hits'][0]['_source']['message']),
             }
         }
 
@@ -109,13 +124,25 @@ def user_connection_info(username=None, mac=None, date=None):
 
     response = generate_search(query)
 	
-    return { 
-        "success": False, 
-        "last_connection": {
-            "time": find_time(response['hits']['hits'][0]['_source']['@timestamp']),
-            "device": find_mac(response['hits']['hits'][0]['_source']['message'])
+
+    if response['hits']['total'] > 0:
+        return {
+            "success": False,
+            "last_connection": {
+                "time": None,
+                "device": None,
+                "username": None,
+            }
         }
-    }
+    else:
+        return { 
+            "success": False, 
+            "last_connection": {
+                "time": find_time(response['hits']['hits'][0]['_source']['@timestamp']),
+                "device": find_mac(response['hits']['hits'][0]['_source']['message']),
+                "username": None
+            }
+        }
 	
 
 
